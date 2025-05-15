@@ -23,11 +23,9 @@ player2_idle = pygame.transform.scale(player2_idle, (150, 300))
 player2_punch = pygame.image.load("player2_punch.png")
 player2_punch = pygame.transform.scale(player2_punch, (150, 300))
 punch_sound = pygame.mixer.Sound("punch.wav")
-game_over_sound = pygame.mixer.Sound("game_over.mp3")
-fight_effect = pygame.mixer.Sound("fight_effect.mp3")
 start_music = pygame.mixer.Sound("start_music.mp3")
+fight_effect = pygame.mixer.Sound("fight_effect.mp3")
 main_music = pygame.mixer.Sound("main_music.mp3")
-winner_music = pygame.mixer.Sound("winner_music.mp3")
 
 player1_pos = [100, 300]
 player2_pos = [550, 300]
@@ -55,17 +53,6 @@ start_screen = True
 
 start_music.play(-1)
 
-flash_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 165, 0), (0, 255, 255)]
-particles = []
-shake_offset = [0, 0]
-shake_intensity = 5
-
-health_bar_flash_duration = 300
-p1_health_flash_time = 0
-p2_health_flash_time = 0
-p1_health_flash = False
-p2_health_flash = False
-
 while running:
     ret, frame = cap.read()
     frame = cv2.flip(frame, 1)
@@ -75,25 +62,10 @@ while running:
     if start_screen:
         screen.fill((0, 0, 0))
 
-        # Particle Effects
-        if random.randint(0, 1):
-            particles.append([[random.randint(0, WIDTH), random.randint(0, HEIGHT)], [random.uniform(-2, 2), random.uniform(-2, 2)], random.choice(flash_colors)])
-        for particle in particles[:]:
-            particle[0][0] += particle[1][0]
-            particle[0][1] += particle[1][1]
-            particle[1][1] += 0.1  # Gravity effect
-            pygame.draw.circle(screen, particle[2], (int(particle[0][0]), int(particle[0][1])), 5)
-            if particle[0][1] > HEIGHT or particle[0][0] < 0 or particle[0][0] > WIDTH:
-                particles.remove(particle)
-
-        # Flashing Title Text with Shake
-        if random.randint(0, 5) == 0:
-            shake_offset = [random.randint(-shake_intensity, shake_intensity), random.randint(-shake_intensity, shake_intensity)]
-        else:
-            shake_offset = [0, 0]
-        text_color = random.choice(flash_colors)
+        # Flashing Title Text
+        text_color = random.choice([(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 165, 0), (0, 255, 255)])
         title_text = FONT.render("Say 'Start' to Begin", True, text_color)
-        title_rect = title_text.get_rect(center=(WIDTH // 2 + shake_offset[0], HEIGHT // 2 + shake_offset[1]))
+        title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
         screen.blit(title_text, title_rect)
 
         pygame.display.update()
@@ -123,25 +95,53 @@ while running:
     if fight_mode:
         screen.blit(background, (0, 0))
 
-        # Blit Player 1
-        screen.blit(player1_punch if p1_punched else player1_idle, player1_pos)
-
-        # Blit Player 2
-        screen.blit(player2_punch if p2_punched else player2_idle, player2_pos)
-
         # Health Bars
         pygame.draw.rect(screen, (50, 50, 50), (50, 50, 300, HEALTH_BAR_HEIGHT))
         pygame.draw.rect(screen, (50, 50, 50), (WIDTH - 350, 50, 300, HEALTH_BAR_HEIGHT))
         pygame.draw.rect(screen, (0, 200, 0), (50, 50, (player1_health / 500) * 300, HEALTH_BAR_HEIGHT))
         pygame.draw.rect(screen, (200, 0, 0), (WIDTH - 350, 50, (player2_health / 500) * 300, HEALTH_BAR_HEIGHT))
 
-        # Health Percentage Text
-        p1_health_text = FONT.render(f"{int((player1_health / 500) * 100)}%", True, (255, 255, 255))
-        p2_health_text = FONT.render(f"{int((player2_health / 500) * 100)}%", True, (255, 255, 255))
-        screen.blit(p1_health_text, (50, 50 + HEALTH_BAR_HEIGHT + 10))
-        screen.blit(p2_health_text, (WIDTH - 350, 50 + HEALTH_BAR_HEIGHT + 10))
+        player1_punching = False
+        player2_punching = False
+        current_time = pygame.time.get_ticks()
 
-        pygame.display.update()
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                wrist_x = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x
+
+                # Instant Punch Detection
+                if wrist_x < 0.5 and not p1_punched:
+                    player1_punching = True
+                    player2_health -= 10
+                    punch_sound.play()
+                    p1_punched = True
+                    last_punch_time_p1 = current_time
+                elif wrist_x >= 0.5 and not p2_punched:
+                    player2_punching = True
+                    player1_health -= 10
+                    punch_sound.play()
+                    p2_punched = True
+                    last_punch_time_p2 = current_time
+
+        # Reset Punch Cooldown
+        if current_time - last_punch_time_p1 > cooldown_time:
+            p1_punched = False
+        if current_time - last_punch_time_p2 > cooldown_time:
+            p2_punched = False
+
+        # Blit Players
+        screen.blit(player1_punch if player1_punching else player1_idle, player1_pos)
+        screen.blit(player2_punch if player2_punching else player2_idle, player2_pos)
+
+        # Display Winner
+        if player1_health <= 0 or player2_health <= 0:
+            winner_text = "Player 1 Wins!" if player2_health <= 0 else "Player 2 Wins!"
+            screen.blit(FONT.render(winner_text, True, (255, 255, 0)), (WIDTH // 2 - 150, HEIGHT // 2 - 50))
+            pygame.display.update()
+            pygame.time.wait(3000)
+            running = False
+
+    pygame.display.update()
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
