@@ -42,7 +42,7 @@ player1_pos = [100, 300]
 player2_pos = [550, 300]
 player1_health = 500
 player2_health = 500
-move_step = 15  # amount player moves per command
+move_step = 15
 
 # Health bar settings
 FONT = pygame.font.Font(None, 50)
@@ -56,35 +56,40 @@ cap = cv2.VideoCapture(0)
 # Speech recognition
 recognizer = sr.Recognizer()
 
-# Punch cooldown
-cooldown_time = 500
-last_punch_time_p1 = 0
-last_punch_time_p2 = 0
-p1_punched = False
-p2_punched = False
-
-# Block states and timers
-p1_blocking = False
-p2_blocking = False
-block_duration = 1500  # milliseconds
-p1_block_start = 0
-p2_block_start = 0
-
 # Game states
 running = True
 game_over = False
 fight_mode = False
 start_screen = True
-mode = None  # "friend" or "bot"
+mode = None
 
-# Bot AI variables
+# AI variables
 bot_blocking = False
 bot_block_start = 0
-bot_block_duration = 1000  # ms
+bot_block_duration = 1000
 bot_punch_cooldown = 1000
 last_bot_punch_time = 0
 
-# Function to safely listen to voice commands (non-blocking)
+# Cooldowns and flags
+cooldown_time = 500
+last_punch_time_p1 = 0
+last_punch_time_p2 = 0
+p1_punched = False
+p2_punched = False
+p1_blocking = False
+p2_blocking = False
+block_duration = 1500
+p1_block_start = 0
+p2_block_start = 0
+
+# Timing for voice command throttling
+last_voice_time = 0
+voice_command = ""
+
+# Restart button
+restart_button = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 60, 200, 50)
+
+# Voice listener
 def listen_commands(timeout=1, phrase_time_limit=2):
     try:
         with sr.Microphone() as source:
@@ -97,20 +102,25 @@ def listen_commands(timeout=1, phrase_time_limit=2):
 
 def move_player(pos, direction):
     if direction == "forward":
-        # For player1, forward means move right; player2, move left (facing each other)
-        if pos == player1_pos:
-            if pos[0] + move_step + 150 < player2_pos[0]:  # prevent overlap
-                pos[0] += move_step
-        else:
-            if pos[0] - move_step > player1_pos[0] + 150:
-                pos[0] -= move_step
+        if pos == player1_pos and pos[0] + move_step + 150 < player2_pos[0]:
+            pos[0] += move_step
+        elif pos == player2_pos and pos[0] - move_step > player1_pos[0] + 150:
+            pos[0] -= move_step
     elif direction == "back":
-        if pos == player1_pos:
-            if pos[0] - move_step > 0:
-                pos[0] -= move_step
-        else:
-            if pos[0] + move_step + 150 < WIDTH:
-                pos[0] += move_step
+        if pos == player1_pos and pos[0] - move_step > 0:
+            pos[0] -= move_step
+        elif pos == player2_pos and pos[0] + move_step + 150 < WIDTH:
+            pos[0] += move_step
+
+def flash_text(text, color):
+    screen.fill((0, 0, 0))
+    for _ in range(5):
+        flash_color = random.choice([(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 165, 0), (0, 255, 255)])
+        rendered = FONT.render(text, True, flash_color)
+        rect = rendered.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+        screen.blit(rendered, rect)
+        pygame.display.update()
+        pygame.time.delay(200)
 
 while running:
     ret, frame = cap.read()
@@ -118,38 +128,36 @@ while running:
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_frame)
 
+    current_time = pygame.time.get_ticks()
+    if current_time - last_voice_time > 1000:
+        voice_command = listen_commands(timeout=1, phrase_time_limit=2)
+        last_voice_time = current_time
+
     if start_screen:
         screen.fill((0, 0, 0))
-        text_color = random.choice([(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 165, 0), (0, 255, 255)])
-        title_text = FONT.render("Say 'Start' to Begin", True, text_color)
+        title_text = FONT.render("Say 'Start' to Begin", True, (255, 255, 255))
         title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 50))
         screen.blit(title_text, title_rect)
-        mode_text = FONT.render("Say 'Bot' or 'Friend' mode", True, text_color)
+        mode_text = FONT.render("Say 'Bot' or 'Friend' mode", True, (255, 255, 255))
         mode_rect = mode_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50))
         screen.blit(mode_text, mode_rect)
-
         pygame.display.update()
 
-        command = listen_commands(timeout=2, phrase_time_limit=2)
-        if 'start' in command and mode in ['bot', 'friend']:
-            start_music.stop()
-            fight_effect.play()
-            fight_mode = True
+        if 'start' in voice_command and mode in ['bot', 'friend']:
             start_screen = False
+            fight_mode = True
+            fight_effect.play()
             main_music.play(-1)
-        elif 'quit' in command:
+        elif 'quit' in voice_command:
             running = False
-        elif 'bot' in command:
+        elif 'bot' in voice_command:
             mode = 'bot'
-        elif 'friend' in command:
+        elif 'friend' in voice_command:
             mode = 'friend'
-
         continue
 
     if fight_mode:
         screen.blit(background, (0, 0))
-
-        # Draw health bars
         pygame.draw.rect(screen, (50, 50, 50), (50, 50, 300, HEALTH_BAR_HEIGHT))
         pygame.draw.rect(screen, (50, 50, 50), (WIDTH - 350, 50, 300, HEALTH_BAR_HEIGHT))
         pygame.draw.rect(screen, (0, 200, 0), (50, 50, (player1_health / 500) * 300, HEALTH_BAR_HEIGHT))
@@ -158,12 +166,6 @@ while running:
         player1_punching = False
         player2_punching = False
 
-        current_time = pygame.time.get_ticks()
-
-        # Voice commands
-        voice_command = listen_commands(timeout=0.5, phrase_time_limit=1)
-
-        # --- Player 1 commands ---
         if mode == "friend":
             if "p1 forward" in voice_command:
                 move_player(player1_pos, "forward")
@@ -173,8 +175,6 @@ while running:
                 p1_blocking = True
                 p1_block_start = current_time
 
-        # --- Player 2 commands ---
-        if mode == "friend":
             if "p2 forward" in voice_command:
                 move_player(player2_pos, "forward")
             elif "p2 back" in voice_command:
@@ -183,34 +183,23 @@ while running:
                 p2_blocking = True
                 p2_block_start = current_time
 
-        # --- Bot mode AI ---
-        if mode == "bot":
-            # Bot randomly blocks
+        elif mode == "bot":
             if not bot_blocking and random.random() < 0.01:
                 bot_blocking = True
                 bot_block_start = current_time
-
-            # Bot stops blocking after duration
             if bot_blocking and current_time - bot_block_start > bot_block_duration:
                 bot_blocking = False
-
-            # Bot punches if cooldown passed and close enough
             if current_time - last_bot_punch_time > bot_punch_cooldown:
                 if player2_pos[0] - player1_pos[0] < 200:
-                    player1_punching = True
                     if not p1_blocking:
                         player1_health -= 10
                         punch_sound.play()
                     last_bot_punch_time = current_time
 
-        # Hand landmarks punch detection
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
                 wrist_x = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x
-
-                # For friend mode, detect punch from hand position (left side = p1, right side = p2)
                 if mode == "friend":
-                    # Player 1 punch detection (left side)
                     if wrist_x < 0.5 and not p1_punched:
                         if not p2_blocking:
                             player2_health -= 10
@@ -218,8 +207,6 @@ while running:
                         player1_punching = True
                         p1_punched = True
                         last_punch_time_p1 = current_time
-
-                    # Player 2 punch detection (right side)
                     elif wrist_x >= 0.5 and not p2_punched:
                         if not p1_blocking:
                             player1_health -= 10
@@ -228,19 +215,15 @@ while running:
                         p2_punched = True
                         last_punch_time_p2 = current_time
 
-        # Reset punch flags after cooldown
         if current_time - last_punch_time_p1 > cooldown_time:
             p1_punched = False
         if current_time - last_punch_time_p2 > cooldown_time:
             p2_punched = False
-
-        # Block duration check
         if p1_blocking and current_time - p1_block_start > block_duration:
             p1_blocking = False
         if p2_blocking and current_time - p2_block_start > block_duration:
             p2_blocking = False
 
-        # Draw players with states
         if p1_blocking:
             screen.blit(player1_block, player1_pos)
         elif player1_punching:
@@ -255,7 +238,6 @@ while running:
         else:
             screen.blit(player2_idle, player2_pos)
 
-        # Check game over
         if player1_health <= 0 or player2_health <= 0:
             fight_mode = False
             game_over = True
@@ -263,22 +245,44 @@ while running:
         pygame.display.update()
 
     elif game_over:
-        screen.fill((0, 0, 0))
-        if player1_health <= 0:
-            winner_text = FONT.render("Player 2 Wins!", True, (255, 0, 0))
-        else:
-            winner_text = FONT.render("Player 1 Wins!", True, (0, 255, 0))
-        winner_rect = winner_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
-        screen.blit(winner_text, winner_rect)
-        pygame.display.update()
+        winner = "Player 2 Wins!" if player1_health <= 0 else "Player 1 Wins!"
+        flash_text(winner, (255, 255, 255))
+        while True:
+            screen.fill((0, 0, 0))
+            restart_text = FONT.render("Say 'Restart' or 'Quit' or Click Below", True, (255, 255, 255))
+            screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 - 60))
+            pygame.draw.rect(screen, (100, 100, 255), restart_button)
+            btn_label = FONT.render("Restart", True, (255, 255, 255))
+            screen.blit(btn_label, (restart_button.x + 30, restart_button.y + 5))
+            pygame.display.update()
 
-        # Wait for quit
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            cmd = listen_commands(timeout=2, phrase_time_limit=2)
+            if "restart" in cmd:
+                player1_health = 500
+                player2_health = 500
+                player1_pos = [100, 300]
+                player2_pos = [550, 300]
+                game_over = False
+                start_screen = True
+                mode = None
+                break
+            elif "quit" in cmd:
                 running = False
-        continue
+                break
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                    break
+                elif event.type == pygame.MOUSEBUTTONDOWN and restart_button.collidepoint(event.pos):
+                    player1_health = 500
+                    player2_health = 500
+                    player1_pos = [100, 300]
+                    player2_pos = [550, 300]
+                    game_over = False
+                    start_screen = True
+                    mode = None
+                    break
 
-    # Event handling (closing window)
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
